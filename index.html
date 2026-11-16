@@ -4,21 +4,573 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Part Health Check</title>
-<style>body{font:16px system-ui,sans-serif;margin:0;padding:40px 16px;text-align:center;background:#f6f7f9;color:#111}</style>
+<style>
+  :root{--bg:#f6f7f9;--card:#fff;--ink:#111;--mute:#666;--ok:#1e8e3e;--warn:#e8a300;--bad:#d93025;--line:#ddd}
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  main{max-width:480px;margin:0 auto;padding:16px}
+  h1{font-size:20px;margin:0 0 12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px}
+  video{width:100%;border-radius:8px;background:#000}
+  label{display:block;font-size:14px;color:var(--mute);margin-top:10px}
+  input,select,button{width:100%;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px;margin-top:4px}
+  button{background:#111;color:#fff;border:0;font-weight:600;margin-top:12px}
+  button.secondary{background:#eee;color:#111}
+  .verdict{font-size:28px;font-weight:800;text-align:center;padding:16px;border-radius:10px;color:#fff}
+  .bar{height:14px;background:#e5e5e5;border-radius:7px;overflow:hidden;margin:8px 0}
+  .bar>div{height:100%}
+  .row{display:flex;justify-content:space-between;font-size:14px;color:var(--mute)}
+  .hidden{display:none}
+  small{color:var(--mute)}
+  table{width:100%;font-size:13px;border-collapse:collapse}
+  td{padding:4px 2px;border-bottom:1px solid var(--line)}
+  #catalog input{padding:6px;margin:0;width:100%}
+  summary{cursor:pointer}
+</style>
 </head>
 <body>
-<p id="msg">Opening Part Health Check…</p>
+<main>
+<h1>Part Health Check</h1>
+
+<section class="card" id="scan">
+  <video id="video" playsinline muted></video>
+  <button id="startCam">Start camera &amp; scan QR</button>
+  <label>Or type part ID<input id="manualId" placeholder="e.g. BS-00123" autocapitalize="characters"></label>
+  <button class="secondary" id="lookup">Look up</button>
+</section>
+
+<section class="card hidden" id="register">
+  <strong>New part: <span id="regId"></span></strong>
+  <small>Not in records yet. Register it once at install.</small>
+  <label>Part type<select id="regType"></select></label>
+  <label>Vehicle ID<input id="regVehicle" placeholder="e.g. ZYPP-4521"></label>
+  <label>Odometer at install (km)<input id="regOdo" type="number" inputmode="numeric"></label>
+  <button id="saveReg">Save</button>
+</section>
+
+<section class="card hidden" id="result">
+  <strong id="resTitle"></strong><br>
+  <small id="resMeta"></small>
+  <label>Current vehicle odometer (km)<input id="curOdo" type="number" inputmode="numeric"></label>
+  <label>Visual condition<select id="cond"><option value="ok">Looks fine</option><option value="worn">Visibly worn</option><option value="damaged">Damaged / broken</option></select></label>
+  <label id="measLabel"><span id="measText"></span><input id="meas" type="number" step="0.1" inputmode="decimal"></label>
+  <label>Photo of the part (camera)<input id="photo" type="file" accept="image/*" capture="environment"></label>
+  <small id="photoStatus"></small>
+  <button id="check">Check health</button>
+  <div id="out" class="hidden">
+    <div class="verdict" id="verdict"></div>
+    <div class="bar"><div id="barFill"></div></div>
+    <div class="row"><span id="lifeLeft"></span><span id="basis"></span></div>
+    <small id="breakdown"></small>
+    <img id="heat" class="hidden" alt="Wear map: red areas differ most from a new part" style="width:100%;border-radius:8px;margin-top:8px">
+    <button id="logReplace">Mark as replaced (reset record)</button>
+    <button class="secondary" id="logKeep">Log inspection, keep part</button>
+  </div>
+</section>
+
+<section class="card">
+  <strong>Recent log</strong>
+  <table id="log"></table>
+</section>
+
+<section class="card">
+  <details>
+    <summary><strong>Server connection</strong></summary>
+    <small>Photos are checked by the analysis server. Enter the access key you were given.</small>
+    <label>Server URL<input id="srvUrl" placeholder="https://parts.example.com" inputmode="url"></label>
+    <label>Access key<input id="srvKey" type="password" autocomplete="off"></label>
+    <button class="secondary" id="srvSave">Save server settings</button>
+    <small id="srvStatus"></small>
+  </details>
+</section>
+
+<!-- Admin only: shown when the page is opened with ?admin at the end of the link. -->
+<section class="card hidden" id="adminRefs">
+  <details open>
+    <summary><strong>Admin: reference photos (new and worn-out parts)</strong></summary>
+    <small>Upload many photos of unused parts per part type, from different angles and in different lighting, plus photos of scrapped parts. Then train the server model for that part type.</small>
+    <label>Part type<select id="refType"></select></label>
+    <label>Photos of NEW parts<input id="refNew" type="file" accept="image/*" multiple></label>
+    <label>Photos of WORN-OUT parts (optional)<input id="refWorn" type="file" accept="image/*" multiple></label>
+    <small id="refStatus"></small>
+    <table id="refTable"></table>
+    <button class="secondary" id="clearRefs">Clear references for this part type</button>
+    <button id="srvTrain">Train server model for this part type</button>
+    <small id="trainStatus"></small>
+  </details>
+</section>
+
+<section class="card hidden" id="adminCatalog">
+  <details>
+    <summary><strong>Admin: edit catalog (rated life and limits)</strong></summary>
+    <small>Rated km = expected life of a new part. New / Replace at = measurement value when new and when it must be replaced.</small>
+    <table id="catalog"></table>
+    <button id="saveCat">Save catalog</button>
+    <button class="secondary" id="resetCat">Reset to defaults</button>
+  </details>
+</section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
 <script>
-// The app runs behind a tunnel whose address changes on restart; link.txt always holds the current one.
-// The time stamp stops GitHub's cache from serving an old address.
-fetch('link.txt?t=' + Date.now(), {cache: 'no-store'})
-  .then(r => r.text())
-  .then(t => {
-    const url = t.trim();
-    if (!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(url)) throw new Error('bad link');
-    location.replace(url + '/' + location.search);   // keeps ?admin
-  })
-  .catch(() => { document.getElementById('msg').textContent = 'The server is offline right now. Try again in a few minutes.'; });
+// Rated life per part type, grouped by scooter system. `m` = optional field measurement: value when new, value at end of life.
+// shortcut: single catalog with fleet-wide averages, upgrade to per-model values once real wear data is logged.
+const CATALOG = {
+  brake_shoe:      {cat:'Brakes',      name:'Brake shoe (drum)',      lifeKm:15000, m:{label:'Lining thickness', unit:'mm', newV:4.0, minV:1.5}},
+  brake_pad:       {cat:'Brakes',      name:'Brake pad (disc)',       lifeKm:12000, m:{label:'Pad thickness', unit:'mm', newV:6.0, minV:2.0}},
+  brake_disc:      {cat:'Brakes',      name:'Brake disc',             lifeKm:40000, m:{label:'Disc thickness', unit:'mm', newV:4.0, minV:3.5}},
+  brake_cable:     {cat:'Brakes',      name:'Brake cable',            lifeKm:20000},
+  brake_lever:     {cat:'Brakes',      name:'Brake lever',            lifeKm:30000},
+  tyre_front:      {cat:'Wheels',      name:'Tyre front',             lifeKm:20000, m:{label:'Tread depth', unit:'mm', newV:6.0, minV:1.6}},
+  tyre_rear:       {cat:'Wheels',      name:'Tyre rear',              lifeKm:15000, m:{label:'Tread depth', unit:'mm', newV:6.0, minV:1.6}},
+  tube:            {cat:'Wheels',      name:'Inner tube',             lifeKm:15000},
+  wheel_bearing:   {cat:'Wheels',      name:'Wheel bearing',          lifeKm:30000},
+  rim:             {cat:'Wheels',      name:'Rim / wheel',            lifeKm:60000},
+  battery:         {cat:'Electrical',  name:'Battery pack',           lifeKm:60000, m:{label:'State of health', unit:'%', newV:100, minV:70}},
+  motor:           {cat:'Electrical',  name:'Hub motor',              lifeKm:80000},
+  controller:      {cat:'Electrical',  name:'Motor controller',       lifeKm:60000},
+  dc_converter:    {cat:'Electrical',  name:'DC-DC converter',        lifeKm:60000},
+  charge_port:     {cat:'Electrical',  name:'Charging port',          lifeKm:30000},
+  wiring:          {cat:'Electrical',  name:'Wiring harness',         lifeKm:60000},
+  throttle:        {cat:'Controls',    name:'Throttle',               lifeKm:30000},
+  display:         {cat:'Controls',    name:'Display / cluster',      lifeKm:60000},
+  key_switch:      {cat:'Controls',    name:'Key / ignition switch',  lifeKm:40000},
+  horn:            {cat:'Controls',    name:'Horn',                   lifeKm:40000},
+  switchgear:      {cat:'Controls',    name:'Handlebar switches',     lifeKm:40000},
+  grips:           {cat:'Controls',    name:'Handlebar grips',        lifeKm:15000},
+  headlight:       {cat:'Lights',      name:'Headlight',              lifeKm:40000},
+  tail_light:      {cat:'Lights',      name:'Tail / brake light',     lifeKm:40000},
+  indicators:      {cat:'Lights',      name:'Indicators',             lifeKm:30000},
+  fork:            {cat:'Suspension',  name:'Front fork / shock',     lifeKm:40000},
+  rear_shock:      {cat:'Suspension',  name:'Rear shock',             lifeKm:40000},
+  steering_bearing:{cat:'Suspension',  name:'Steering head bearing',  lifeKm:40000},
+  swingarm_bush:   {cat:'Suspension',  name:'Swingarm bush',          lifeKm:30000},
+  chain:           {cat:'Drive',       name:'Chain / belt',           lifeKm:20000},
+  sprocket:        {cat:'Drive',       name:'Sprocket / pulley',      lifeKm:30000},
+  mirror:          {cat:'Body',        name:'Mirror',                 lifeKm:40000},
+  seat:            {cat:'Body',        name:'Seat',                   lifeKm:40000},
+  body_panel:      {cat:'Body',        name:'Body panel',             lifeKm:60000},
+  footrest:        {cat:'Body',        name:'Footrest / floorboard',  lifeKm:40000},
+  side_stand:      {cat:'Body',        name:'Side / centre stand',    lifeKm:40000},
+  number_plate:    {cat:'Body',        name:'Number plate holder',    lifeKm:60000},
+};
+const DEFAULTS = JSON.parse(JSON.stringify(CATALOG));
+// Apply the admin's overrides over the defaults. The server's copy is fetched at start-up (see loadCatalog);
+// localStorage keeps the last one so the app still works offline.
+function applyCatalog(over) {
+  for (const k in CATALOG) { CATALOG[k].lifeKm = DEFAULTS[k].lifeKm; if (CATALOG[k].m) Object.assign(CATALOG[k].m, DEFAULTS[k].m); }
+  for (const [k, o] of Object.entries(over || {})) {
+    if (!CATALOG[k]) continue;
+    CATALOG[k].lifeKm = o.lifeKm;
+    if (CATALOG[k].m && o.newV != null) Object.assign(CATALOG[k].m, {newV: o.newV, minV: o.minV});
+  }
+}
+try { applyCatalog(JSON.parse(localStorage.catalog || '{}')); } catch (e) { applyCatalog({}); }
+const REPLACE_AT = 15, INSPECT_AT = 35; // % life left thresholds
+
+const LIFE_MONTHS = 36; // shortcut: one age limit for every part (rubber, plastics), make it per part once you have failure dates
+const clamp = v => Math.max(0, Math.min(100, Math.round(v)));
+
+// Visual score, calibrated from the reference photos themselves:
+// selfNew = how alike your new refs are to each other, cross = how alike new and worn refs are.
+// shortcut: VIS_FLOOR is fixed for the new-only case, add worn refs and it is no longer used.
+const VIS_FLOOR = 0.4;
+function cos(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+// Mean of the k best matches: one lucky reference can't dominate, unlike max.
+function topK(v, list, k = 3) {
+  if (!list || !list.length) return null;
+  const s = list.map(r => cos(v, r)).sort((a, b) => b - a).slice(0, k);
+  return s.reduce((a, b) => a + b, 0) / s.length;
+}
+function meanPairwise(a, b = null) {
+  let s = 0, n = 0;
+  for (let i = 0; i < a.length; i++) for (let j = b ? 0 : i + 1; j < (b || a).length; j++) { s += cos(a[i], (b || a)[j]); n++; }
+  return n ? s / n : null;
+}
+function visualScore(simNew, simWorn, selfNew = 0.9, cross = null) {
+  if (simNew == null) return null;
+  if (simWorn == null) return clamp((simNew - VIS_FLOOR) / (selfNew - VIS_FLOOR) * 100);
+  const margin = Math.max(0.05, selfNew - (cross ?? simWorn));         // typical gap between a new and a worn part
+  return clamp(((simNew - simWorn) / margin + 1) / 2 * 100);
+}
+
+// Pure function: returns {pct, basis, parts, conf}. Weighted blend of measurement, photo, and km/age.
+// visConf (0..1) shrinks the photo weight for poor photos or few references. damaged forces 0, worn caps.
+// visW: base photo weight. 0.3 for the phone's whole-image comparison, 0.5 (same as a measurement) for the server's region-by-region one.
+function health(type, kmUsed, measV, cond, ageMonths = 0, vis = null, visConf = 1, visW = 0.3) {
+  const c = CATALOG[type];
+  if (cond === 'damaged') return {pct: 0, basis: 'visibly damaged', parts: {}, conf: 100};
+  const parts = {};
+  parts.usage = clamp(Math.min(100 - kmUsed / c.lifeKm * 100, 100 - ageMonths / LIFE_MONTHS * 100));
+  if (measV != null && c.m) {
+    parts.measured = clamp((measV - c.m.minV) / (c.m.newV - c.m.minV) * 100);
+    if (parts.measured === 0) return {pct: 0, basis: 'at replacement limit', parts, conf: 100};   // hard limit, no blending
+  }
+  if (vis != null) parts.photo = vis;
+  const w = {measured: 0.5, photo: visW * visConf, usage: 0.2};
+  let num = 0, den = 0;
+  for (const k in parts) { num += parts[k] * w[k]; den += w[k]; }
+  // conf = share of the full evidence (measure + good photo + usage) behind this number
+  let r = {pct: clamp(num / den), basis: Object.keys(parts).join(' + '), parts, conf: clamp(den / (0.7 + visW) * 100)};
+  if (cond === 'worn' && r.pct > INSPECT_AT) r = {...r, pct: INSPECT_AT, basis: r.basis + ', capped: visibly worn'};
+  return r;
+}
+const verdictFor = pct => pct <= REPLACE_AT ? ['REPLACE','var(--bad)'] : pct <= INSPECT_AT ? ['INSPECT','var(--warn)'] : ['KEEP','var(--ok)'];
+
+// self-check
+console.assert(health('brake_shoe', 4500).pct === 70, 'km estimate');
+console.assert(health('brake_shoe', 0, 1.5).pct === 0, 'measured min');
+console.assert(health('brake_shoe', 0, 4.0).pct === 100, 'measured new');
+console.assert(health('brake_shoe', 15000, 4.0).pct === 71, 'measurement 0.5 + usage 0.2 blend');
+console.assert(health('mirror', 0, null, 'damaged').pct === 0, 'damaged wins');
+console.assert(health('mirror', 0, null, 'worn').pct === INSPECT_AT, 'worn caps');
+console.assert(health('battery', 0, 85).pct === 64, 'percent measurement blended with usage');
+console.assert(health('tyre_rear', 0, 1.6).pct === 0, 'at limit forces replace');
+console.assert(health('mirror', 0, null, 'ok', 18).pct === 50, 'age counts');
+console.assert(visualScore(0.9) === 100 && visualScore(0.4) === 0, 'new-only bands');
+console.assert(visualScore(0.65, null, 0.9) === 50, 'new-only midpoint');
+console.assert(visualScore(0.8, 0.8, 0.9, 0.7) === 50 && visualScore(0.9, 0.7, 0.9, 0.7) === 100, 'new vs worn, calibrated margin');
+console.assert(health('mirror', 0, null, 'ok', 0, 0).pct === 40, 'photo 0.3 + usage 0.2 blend');
+console.assert(health('mirror', 0, null, 'ok', 0, 0, 0).pct === 100, 'zero-confidence photo ignored');
+console.assert(health('brake_shoe', 0, 4.0, 'ok', 0, 100).conf === 100 && health('mirror', 0).conf === 20, 'confidence');
+console.assert(health('brake_shoe', 3000, null, 'ok', 0, 0, 0.8, 0.5).pct === 27, 'server photo outweighs km: worn photo at low km -> inspect');
+console.assert(health('brake_shoe', 0, 4.0, 'ok', 0, 100, 1, 0.5).conf === 100, 'confidence with server photo');
+console.assert(Math.abs(meanPairwise([[1,0],[0,1],[1,0]]) - 1/3) < 1e-9, 'pairwise mean');
+
+const db = {
+  parts: JSON.parse(localStorage.parts || '{}'),
+  log: JSON.parse(localStorage.log || '[]'),
+  // v2: vectors from the corrected, multi-view pipeline. Old 'refs' were made without it and are not comparable.
+  refs: JSON.parse(localStorage.refs2 || '{}'),   // {type: {new: [vec], worn: [vec]}}
+  save(){
+    localStorage.parts = JSON.stringify(this.parts); localStorage.log = JSON.stringify(this.log.slice(-50));
+    // shortcut: localStorage holds ~5 MB, about 600 reference photos in total. Move to IndexedDB or a server beyond that.
+    try { localStorage.refs2 = JSON.stringify(this.refs); } catch (e) { alert('Phone storage full: delete some reference photos.'); }
+  }
+};
+const $ = id => document.getElementById(id);
+let currentId = null;
+
+{
+  const groups = {};
+  for (const [k,v] of Object.entries(CATALOG)) (groups[v.cat] ||= []).push(`<option value="${k}">${v.name}</option>`);
+  $('regType').innerHTML = $('refType').innerHTML = Object.entries(groups).map(([g,o]) => `<optgroup label="${g}">${o.join('')}</optgroup>`).join('');
+}
+
+function show(id){ ['register','result'].forEach(s => $(s).classList.toggle('hidden', s !== id)); $('out').classList.add('hidden'); }
+
+function open(id) {
+  id = id.trim().toUpperCase();
+  if (!id) return;
+  currentId = id;
+  const p = db.parts[id];
+  if (!p) { $('regId').textContent = id; show('register'); return; }
+  const c = CATALOG[p.type];
+  $('resTitle').textContent = `${c.name} · ${id}`;
+  $('resMeta').textContent = `Vehicle ${p.vehicle} · installed at ${p.installOdo} km on ${p.installDate}`;
+  $('measLabel').classList.toggle('hidden', !c.m);
+  if (c.m) $('measText').textContent = `${c.m.label} (${c.m.unit}), optional, overrides estimate. New: ${c.m.newV}, replace at: ${c.m.minV}`;
+  $('meas').value = ''; $('curOdo').value = ''; $('cond').value = 'ok'; $('photo').value = ''; photo = null; photoFile = null; $('heat').classList.add('hidden');
+  const n = (db.refs[p.type]?.new || []).length;
+  $('photoStatus').textContent = srv().key ? 'The photo will be checked by the analysis server.'
+    : n ? `${n} reference photo(s) on this phone.` : 'Enter the access key under Server connection to use photos.';
+  show('result');
+}
+
+// ---- Image pipeline: quality check -> lighting correction -> multi-view embedding (MobileNet, on the phone) ----
+let modelP, photo = null;   // photo = {vec, q}
+const model = () => modelP ||= mobilenet.load({version: 2, alpha: 1.0});
+const SIDE = 384;           // working resolution: fixes scale differences between phone cameras
+const q01 = (v, lo, hi) => Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+// Normalised sharpness: sharp test photos ~0.12–0.26, 1px blur ~0.02–0.03, 2px blur ~0.003.
+// shortcut: set from synthetic images, re-tune on ~20 real workshop photos.
+const SHARP_LO = 0.005, SHARP_HI = 0.04;
+
+function toCanvas(img) {
+  const s = SIDE / Math.max(img.width, img.height), c = document.createElement('canvas');
+  c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+  c.getContext('2d', {willReadFrequently: true}).drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+
+// Measured on the raw photo. Returns q in 0..1 plus the reason when low.
+// shortcut: thresholds are generic phone-photo values, tune them on your own rejected photos.
+function quality(c) {
+  const {data: d, width: w, height: h} = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+  const g = new Float32Array(w * h); let sum = 0, sq = 0, clip = 0;
+  for (let i = 0; i < g.length; i++) {
+    const y = 0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2];
+    g[i] = y; sum += y; sq += y * y; if (y < 8 || y > 247) clip++;
+  }
+  const mean = sum / g.length, std = Math.sqrt(sq / g.length - mean * mean);
+  let ls = 0, ls2 = 0, n = 0;   // variance of the Laplacian = sharpness
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x, L = 4 * g[i] - g[i-1] - g[i+1] - g[i-w] - g[i+w];
+    ls += L; ls2 += L * L; n++;
+  }
+  // divided by image variance so a dim but sharp photo is not mistaken for blur
+  const sharp = (ls2 / n - (ls / n) ** 2) / Math.max(std * std, 1);
+  const s = {
+    blur: q01(sharp, SHARP_LO, SHARP_HI),
+    dark: q01(mean, 15, 60),
+    glare: q01(255 - mean, 15, 60),
+    contrast: q01(std, 8, 35),
+    clipped: 1 - q01(clip / g.length, 0.15, 0.5),
+  };
+  const worst = Object.entries(s).sort((a, b) => a[1] - b[1])[0];
+  return {q: worst[1], reason: worst[0], sharp: Math.round(sharp * 1000) / 1000, mean: Math.round(mean)};
+}
+
+// Gray-world white balance + 1–99 percentile stretch + gamma lift for dark shots.
+// Makes a dim yellow workshop photo and a bright daylight photo of the same part look alike to the model.
+function correct(c) {
+  const ctx = c.getContext('2d'), im = ctx.getImageData(0, 0, c.width, c.height), d = im.data, N = d.length / 4;
+  const m = [0, 0, 0];
+  for (let i = 0; i < d.length; i += 4) { m[0] += d[i]; m[1] += d[i+1]; m[2] += d[i+2]; }
+  const avg = (m[0] + m[1] + m[2]) / 3, gain = m.map(v => avg / Math.max(v, 1));
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < d.length; i += 4) {
+    for (let k = 0; k < 3; k++) d[i+k] = Math.min(255, d[i+k] * gain[k]);
+    hist[Math.round(0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2])]++;
+  }
+  let lo = 0, hi = 255, acc = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc <= N * 0.01) lo = v; if (acc <= N * 0.99) hi = v; }
+  hi = Math.max(hi, lo + 20);
+  let mean = 0; for (let v = 0; v < 256; v++) mean += hist[v] * Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+  mean /= N;
+  const gamma = Math.max(0.5, Math.min(1, Math.log(0.45) / Math.log(Math.max(mean, 0.01))));   // only brightens
+  const lut = new Uint8ClampedArray(256);
+  for (let v = 0; v < 256; v++) lut[v] = 255 * Math.pow(Math.max(0, Math.min(1, (v - lo) / (hi - lo))), gamma);
+  for (let i = 0; i < d.length; i += 4) { d[i] = lut[d[i]]; d[i+1] = lut[d[i+1]]; d[i+2] = lut[d[i+2]]; }
+  ctx.putImageData(im, 0, 0);
+  return c;
+}
+
+// Average of 3 views (full, mirrored, centre 80% crop): smooths out framing and angle differences.
+function views(c) {
+  const mk = (sx, sy, sw, sh, flip) => {
+    const v = document.createElement('canvas'); v.width = v.height = 224; const x = v.getContext('2d');
+    if (flip) { x.translate(224, 0); x.scale(-1, 1); }
+    x.drawImage(c, sx, sy, sw, sh, 0, 0, 224, 224); return v;
+  };
+  const s = Math.min(c.width, c.height), ox = (c.width - s) / 2, oy = (c.height - s) / 2;
+  return [mk(ox, oy, s, s, false), mk(ox, oy, s, s, true), mk(ox + s * 0.1, oy + s * 0.1, s * 0.8, s * 0.8, false)];
+}
+
+async function embed(file) {
+  const img = new Image(); img.src = URL.createObjectURL(file);
+  await img.decode(); URL.revokeObjectURL(img.src);
+  const c = toCanvas(img), q = quality(c), m = await model();
+  const sum = new Float32Array(1280);
+  for (const v of views(correct(c))) { const t = m.infer(v, true), a = await t.data(); t.dispose(); a.forEach((x, i) => sum[i] += x); }
+  const n = Math.hypot(...sum);
+  return {vec: Array.from(sum, x => Math.round(x / n * 1000) / 1000), q};   // 3 decimals keeps storage small
+}
+
+const MIN_Q = 0.3;   // below this the photo is rejected and the mechanic is asked to retake
+const RETAKE = {blur: 'blurry, hold steady and tap to focus', dark: 'too dark, turn on the flash or a torch', glare: 'too bright or glare, move out of direct light',
+  contrast: 'flat image, fill the frame with the part', clipped: 'parts of the image are pure black or white, avoid flash reflection'};
+
+// ---- Analysis server (anomalib PatchCore). Settings stay on this phone. ----
+// Default server = the address this page was opened from, since the server also serves this page.
+// On the fixed github.io address the server's tunnel link changes on restart, so link.txt (kept current by the laptop) always wins.
+const onPages = location.hostname.endsWith('github.io');
+let linkUrl = '';
+const srv = () => ({url: (onPages ? linkUrl : localStorage.srvUrl ?? (location.protocol.startsWith('http') ? location.origin : '')).replace(/\/+$/, ''), key: localStorage.srvKey || ''});
+const linkReady = onPages ? fetch('link.txt?t=' + Date.now(), {cache: 'no-store'}).then(r => r.text())
+  .then(t => { t = t.trim(); if (/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(t)) linkUrl = t; }).catch(() => {}) : Promise.resolve();
+linkReady.then(() => { $('srvUrl').value = srv().url; $('srvUrl').disabled = onPages; });
+$('srvKey').value = srv().key;
+$('srvSave').onclick = async () => {
+  localStorage.srvUrl = $('srvUrl').value.trim(); localStorage.srvKey = $('srvKey').value.trim();
+  if (!srv().url) return $('srvStatus').textContent = 'Server off: the phone compares photos on its own.';
+  try { await api('/parts'); $('srvStatus').textContent = 'Connected.'; loadCatalog(); }
+  catch (e) { $('srvStatus').textContent = 'Not reachable: ' + e.message; }
+};
+async function api(path, body, method) {
+  const headers = {'X-API-Key': srv().key};
+  if (typeof body === 'string') headers['Content-Type'] = 'application/json';
+  const r = await fetch(srv().url + path, {method: method || (body ? 'POST' : 'GET'), headers, body});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+  return j;
+}
+$('srvTrain').onclick = async () => {
+  if (!srv().url) return alert('Save a server URL first.');
+  $('trainStatus').textContent = 'Training… this can take a few minutes.';
+  try {
+    const c = await api('/train/' + $('refType').value, new FormData());
+    $('trainStatus').textContent = `Trained on ${c.n_new} new and ${c.n_worn} worn photos.` +
+      (c.worn == null ? ' Add worn-out photos and train again for an accurate 0% point.' : '') + (c.warning ? ' Warning: ' + c.warning : '');
+  } catch (e) { $('trainStatus').textContent = 'Training failed: ' + e.message; }
+};
+let photoFile = null;
+// shortcut: hiding is cosmetic, the access key is what actually protects uploads. Add admin-only keys if mechanics must be blocked.
+if (new URLSearchParams(location.search).has('admin')) ['adminRefs', 'adminCatalog'].forEach(id => $(id).classList.remove('hidden'));
+
+$('photo').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  photoFile = f;
+  $('photoStatus').textContent = 'Analysing photo…';
+  try {
+    photo = await embed(f);
+    $('photoStatus').textContent = photo.q.q < MIN_Q
+      ? `Photo rejected: ${RETAKE[photo.q.reason]}. Retake it.`
+      : `Photo quality ${Math.round(photo.q.q * 100)}%${photo.q.q < 0.7 ? ` (${photo.q.reason}), it counts for less` : ''}.`;
+    if (photo.q.q < MIN_Q) photo = null;
+  } catch (err) { photo = null; $('photoStatus').textContent = 'Could not analyse photo (model needs internet on first load).'; }
+};
+
+async function addRefs(kind, files) {
+  const type = $('refType').value;
+  db.refs[type] ||= {new: [], worn: []};
+  let skipped = 0;
+  for (let i = 0; i < files.length; i++) {
+    $('refStatus').textContent = `Processing ${i + 1} / ${files.length}…`;
+    try {
+      const r = await embed(files[i]);
+      if (r.q.q < 0.5) { skipped++; continue; }   // references must be clean, bad ones poison every comparison
+      db.refs[type][kind].push(r.vec);
+    } catch (e) { $('refStatus').textContent = 'Failed: ' + e.message; return; }
+  }
+  db.save(); renderRefs();
+  $('refStatus').textContent = `Saved.${skipped ? ` ${skipped} photo(s) skipped for poor quality.` : ''}`;
+  if (srv().url) {
+    // shortcut: sends every selected photo, the server's own checks reject unreadable ones but not blurry ones
+    const fd = new FormData(); for (const f of files) fd.append('files', f);
+    try { await api(`/refs/${type}/${kind}`, fd); $('refStatus').textContent += ' Uploaded to server, tap Train to use them.'; }
+    catch (e) { $('refStatus').textContent += ' Server upload failed: ' + e.message; }
+  }
+}
+$('refNew').onchange = e => addRefs('new', e.target.files);
+$('refWorn').onchange = e => addRefs('worn', e.target.files);
+$('clearRefs').onclick = () => { if (confirm('Delete reference photos for this part type?')) { delete db.refs[$('refType').value]; db.save(); renderRefs(); } };
+function renderRefs(){
+  $('refTable').innerHTML = Object.entries(db.refs).map(([k, r]) => `<tr><td>${CATALOG[k]?.name || k}</td><td>${r.new.length} new</td><td>${r.worn.length} worn</td></tr>`).join('') || '<tr><td><small>No reference photos yet</small></td></tr>';
+}
+renderRefs();
+
+$('lookup').onclick = () => open($('manualId').value);
+$('manualId').onkeydown = e => { if (e.key === 'Enter') open(e.target.value); };
+
+$('saveReg').onclick = () => {
+  const odo = Number($('regOdo').value), vehicle = $('regVehicle').value.trim();
+  if (!vehicle || $('regOdo').value === '' || !(odo >= 0)) return alert('Vehicle ID and install odometer are required.');
+  db.parts[currentId] = {type:$('regType').value, vehicle, installOdo:odo, installDate:new Date().toISOString().slice(0,10)};
+  db.save(); open(currentId);
+};
+
+$('check').onclick = async () => {
+  const p = db.parts[currentId], cur = Number($('curOdo').value);
+  if ($('curOdo').value === '' || cur < p.installOdo) return alert('Enter current odometer (must be at least the install odometer).');
+  const meas = $('meas').value === '' ? null : Number($('meas').value);
+  const ageMonths = (Date.now() - new Date(p.installDate)) / (30.44 * 864e5);
+  const refs = db.refs[p.type];
+  let vis = null, visConf = 0, visW = 0.3;
+  if (photo && refs && refs.new.length) {
+    vis = visualScore(topK(photo.vec, refs.new), topK(photo.vec, refs.worn), meanPairwise(refs.new) ?? 0.9, meanPairwise(refs.new, refs.worn.length ? refs.worn : null));
+    // trust grows with photo quality, number of new refs (full at 5), and having worn refs to compare against
+    visConf = photo.q.q * Math.min(1, refs.new.length / 5) * (refs.worn.length ? 1 : 0.6);
+  }
+  $('heat').classList.add('hidden');
+  if (photo && photoFile && srv().url) {   // server result replaces the phone's when available
+    const fd = new FormData(); fd.append('file', photoFile);
+    $('check').disabled = true; $('check').textContent = 'Asking server…';
+    try {
+      const r = await api('/score/' + p.type, fd);
+      vis = r.health; visConf = photo.q.q * (r.calibrated ? 1 : 0.6); visW = 0.5;
+      $('heat').src = r.heatmap; $('heat').classList.remove('hidden');
+    } catch (e) { $('photoStatus').textContent = `Server unavailable (${e.message}), used the phone's comparison.`; }
+    $('check').disabled = false; $('check').textContent = 'Check health';
+  }
+  const {pct, basis, parts, conf} = health(p.type, cur - p.installOdo, meas, $('cond').value, ageMonths, vis, visConf, visW);
+  $('breakdown').textContent = Object.entries(parts).map(([k, v]) => `${k}: ${v}%`).join(' · ') + ` · confidence: ${conf}%`;
+  const [v, color] = verdictFor(pct);
+  $('verdict').textContent = v; $('verdict').style.background = color;
+  $('barFill').style.width = pct + '%'; $('barFill').style.background = color;
+  $('lifeLeft').textContent = `${pct}% life left`;
+  $('basis').textContent = `basis: ${basis}`;
+  $('out').classList.remove('hidden');
+  $('out').dataset.pct = pct; $('out').dataset.odo = cur;
+};
+
+function addLog(action) {
+  db.log.push({t:new Date().toISOString().slice(0,16).replace('T',' '), id:currentId, pct:$('out').dataset.pct, action});
+  db.save(); renderLog();
+}
+$('logKeep').onclick = () => { addLog('kept'); alert('Logged.'); };
+$('logReplace').onclick = () => {
+  if (!confirm('Mark this part as replaced? Record resets to today at the current odometer.')) return;
+  addLog('replaced');
+  const p = db.parts[currentId];
+  db.parts[currentId] = {...p, installOdo:Number($('out').dataset.odo), installDate:new Date().toISOString().slice(0,10)};
+  db.save(); open(currentId);
+};
+function renderLog(){
+  $('log').innerHTML = db.log.slice(-10).reverse().map(l => `<tr><td>${l.t}</td><td>${l.id}</td><td>${l.pct}%</td><td>${l.action}</td></tr>`).join('') || '<tr><td><small>Nothing yet</small></td></tr>';
+}
+renderLog();
+
+// Catalog editor
+function renderCatalog(){
+  $('catalog').innerHTML = '<tr><td>Part</td><td>Rated km</td><td>New</td><td>Replace at</td></tr>' +
+    Object.entries(CATALOG).map(([k,c]) => `<tr data-k="${k}"><td>${c.name}</td><td><input class="lifeKm" type="number" value="${c.lifeKm}"></td>` +
+      (c.m ? `<td><input class="newV" type="number" step="0.1" value="${c.m.newV}"></td><td><input class="minV" type="number" step="0.1" value="${c.m.minV}"></td>` : '<td></td><td></td>') + '</tr>').join('');
+}
+async function loadCatalog() {
+  if (!srv().url || !srv().key) return;
+  try { const cat = await api('/catalog'); localStorage.catalog = JSON.stringify(cat); applyCatalog(cat); renderCatalog(); }
+  catch (e) { /* offline: keep the last copy this phone saw */ }
+}
+$('saveCat').onclick = async () => {
+  const saved = {};
+  for (const tr of $('catalog').querySelectorAll('tr[data-k]')) {
+    const k = tr.dataset.k, c = CATALOG[k], v = cls => Number(tr.querySelector('.' + cls)?.value);
+    const lifeKm = v('lifeKm');
+    if (!(lifeKm > 0)) return alert(`${c.name}: rated km must be above 0.`);
+    saved[k] = {lifeKm};
+    if (c.m) {
+      const newV = v('newV'), minV = v('minV');
+      if (!(newV > minV)) return alert(`${c.name}: "New" must be greater than "Replace at".`);
+      Object.assign(saved[k], {newV, minV});
+    }
+  }
+  await pushCatalog(saved, 'Catalog saved for every phone.');
+};
+$('resetCat').onclick = async () => {
+  if (!confirm('Reset all catalog numbers to defaults for every phone?')) return;
+  await pushCatalog({}, 'Catalog reset to defaults for every phone.');
+};
+async function pushCatalog(cat, okMsg) {
+  if (!srv().url || !srv().key) return alert('Connect to the server first (Server connection).');
+  try { await api('/catalog', JSON.stringify(cat), 'PUT'); }
+  catch (e) { return alert('Not saved, server error: ' + e.message); }   // nothing changes locally unless the server has it
+  localStorage.catalog = JSON.stringify(cat); applyCatalog(cat); renderCatalog(); alert(okMsg);
+}
+renderCatalog();
+linkReady.then(loadCatalog);
+
+// Camera QR scan
+let stream, raf;
+$('startCam').onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+  } catch (e) { return alert('Camera not available. Type the part ID instead.'); }
+  const v = $('video'); v.srcObject = stream; await v.play();
+  const cv = document.createElement('canvas'), ctx = cv.getContext('2d', {willReadFrequently:true});
+  const tick = () => {
+    if (v.readyState === v.HAVE_ENOUGH_DATA) {
+      cv.width = v.videoWidth; cv.height = v.videoHeight; ctx.drawImage(v, 0, 0);
+      const code = jsQR(ctx.getImageData(0,0,cv.width,cv.height).data, cv.width, cv.height);
+      if (code && code.data) { stopCam(); $('manualId').value = code.data; open(code.data); return; }
+    }
+    raf = requestAnimationFrame(tick);
+  };
+  tick();
+};
+function stopCam(){ cancelAnimationFrame(raf); stream && stream.getTracks().forEach(t => t.stop()); }
 </script>
 </body>
 </html>
