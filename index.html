@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Part Health Check</title>
+<style>body{font:16px system-ui,sans-serif;margin:0;padding:40px 16px;text-align:center;background:#f6f7f9;color:#111}</style>
+</head>
+<body>
+<p id="msg">Opening Part Health Check…</p>
+<script>
+// The app runs behind a tunnel whose address changes on restart; link.txt always holds the current one.
+// The time stamp stops GitHub's cache from serving an old address.
+fetch('link.txt?t=' + Date.now(), {cache: 'no-store'})
+  .then(r => r.text())
+  .then(t => {
+    const url = t.trim();
+    if (!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(url)) throw new Error('bad link');
+    location.replace(url + '/' + location.search);   // keeps ?admin
+  })
+  .catch(() => { document.getElementById('msg').textContent = 'The server is offline right now. Try again in a few minutes.'; });
+</script>
+</body>
+</html>
