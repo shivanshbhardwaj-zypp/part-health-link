@@ -1,1 +1,1 @@
-https://consist-finance-there-horses.trycloudflare.com
+https://api.trycloudflare.com
