@@ -1,1 +1,1 @@
-https://api.trycloudflare.com
+https://hosts-converter-solve-route.trycloudflare.com
