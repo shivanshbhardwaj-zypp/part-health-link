@@ -1,1 +1,1 @@
-https://developer-discussing-plastic-bargain.trycloudflare.com
+https://api.trycloudflare.com
