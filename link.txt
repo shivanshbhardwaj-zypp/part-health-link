@@ -1,1 +1,1 @@
-https://comfortable-bee-treatment-got.trycloudflare.com
+https://api.trycloudflare.com
